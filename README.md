@@ -1,4 +1,13 @@
-# llm-fallback
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/header-llm-fallback-dark.png">
+  <img alt="llm-fallback, an open tool from B2B Content Systems" src=".github/assets/header-llm-fallback-light.png">
+</picture>
+
+[![tests](https://github.com/bryanbartlett/llm-fallback/actions/workflows/tests.yml/badge.svg)](https://github.com/bryanbartlett/llm-fallback/actions/workflows/tests.yml)
+![python](https://img.shields.io/badge/python-3.10%2B-F2C400?style=flat-square&labelColor=0F1B2D)
+![dependencies](https://img.shields.io/badge/dependencies-none-F2C400?style=flat-square&labelColor=0F1B2D)
+![licence](https://img.shields.io/badge/licence-MIT-F2C400?style=flat-square&labelColor=0F1B2D)
+
 
 Ask Claude. If Claude cannot answer, ask Gemini, and say so.
 
@@ -43,3 +52,7 @@ python llm_fallback.py "Say hello in five words."
 Change the defaults with `claude_model=` and `gemini_model=`. Pass `transport=` to test without the network (see the tests).
 
 MIT licence.
+
+---
+
+An open tool from **B2B Content Systems**, Bryan Bartlett, Boston, MA. More at [github.com/bryanbartlett](https://github.com/bryanbartlett) and [bryanbartlett.com](https://bryanbartlett.com).
