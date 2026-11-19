@@ -3,7 +3,7 @@
   <img alt="llm-fallback, an open tool from B2B Content Systems" src=".github/assets/header-llm-fallback-light.png">
 </picture>
 
-[![tests](https://github.com/bryanbartlett/llm-fallback/actions/workflows/tests.yml/badge.svg)](https://github.com/bryanbartlett/llm-fallback/actions/workflows/tests.yml)
+[![tests](https://github.com/b2b-content-systems/llm-fallback/actions/workflows/tests.yml/badge.svg)](https://github.com/b2b-content-systems/llm-fallback/actions/workflows/tests.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-F2C400?style=flat-square&labelColor=0F1B2D)
 ![dependencies](https://img.shields.io/badge/dependencies-none-F2C400?style=flat-square&labelColor=0F1B2D)
 ![licence](https://img.shields.io/badge/licence-MIT-F2C400?style=flat-square&labelColor=0F1B2D)
@@ -55,4 +55,4 @@ MIT licence.
 
 ---
 
-An open tool from **B2B Content Systems**, Bryan Bartlett, Boston, MA. More at [github.com/bryanbartlett](https://github.com/bryanbartlett) and [bryanbartlett.com](https://bryanbartlett.com).
+An open tool from **B2B Content Systems**, Bryan Bartlett, Boston, MA. More at [github.com/b2b-content-systems](https://github.com/b2b-content-systems) and [bryanbartlett.com](https://bryanbartlett.com).
