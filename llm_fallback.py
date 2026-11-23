@@ -16,10 +16,18 @@ on a parameter the other model rejects:
   `topP` and `topK`. Thinking tokens count against the output limit, so
   3.x calls get extra headroom.
 
+Images and structured output: pass `images=[Image(png_bytes, "image/png")]`
+to send pictures with the prompt, and `json_schema=` to ask Gemini for JSON
+that matches a schema (Claude gets the same request in words). Every answer
+says how it finished (`finish`), so a reply cut off at the token limit can be
+told apart from a complete one. A model that no longer exists (HTTP 404)
+raises `ModelGone`, so a caller can move to the next model.
+
 Standard library only. Keys come from ANTHROPIC_API_KEY and GEMINI_API_KEY.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -47,6 +55,16 @@ class BadRequest(Exception):
     """The request itself is wrong. Do not fall back; fix the call."""
 
 
+class ModelGone(BadRequest):
+    """The model id no longer exists (HTTP 404). Try the next model."""
+
+
+@dataclass
+class Image:
+    data: bytes
+    mime: str = "image/png"
+
+
 @dataclass
 class Answer:
     text: str
@@ -54,6 +72,11 @@ class Answer:
     provider: str
     fallback_reason: str | None = None
     tried: list[str] = field(default_factory=list)
+    finish: str = "stop"  # stop | max_tokens | other
+
+    @property
+    def cut_off(self) -> bool:
+        return self.finish == "max_tokens"
 
     @property
     def fell_back(self) -> bool:
@@ -93,6 +116,8 @@ def _classify(provider: str, status: int, body: dict) -> None:
         raise Unavailable(f"{provider} auth failed ({status})")
     if status in (408, 429) or status >= 500:
         raise Unavailable(f"{provider} unavailable ({status})")
+    if status == 404:
+        raise ModelGone(f"{provider} model not found (404): {msg}")
     raise BadRequest(f"{provider} rejected the request ({status}): {msg}")
 
 
@@ -122,14 +147,28 @@ def gemini_generation(model: str, max_tokens: int, temperature: float | None) ->
 
 # ---- providers -----------------------------------------------------------
 
+def _schema_words(json_schema: dict | None) -> str:
+    if not json_schema:
+        return ""
+    return ("\n\nAnswer with one JSON object and nothing else. It must match this JSON Schema:\n"
+            + json.dumps(json_schema, ensure_ascii=False))
+
+
 def ask_claude(prompt: str, *, system: str | None = None, model: str = CLAUDE_MODEL,
                max_tokens: int = 1024, temperature: float | None = None,
-               transport: Transport = http_transport, api_key: str | None = None) -> Answer:
+               transport: Transport = http_transport, api_key: str | None = None,
+               images: list[Image] | None = None, json_schema: dict | None = None) -> Answer:
     key = api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise Unavailable("Claude: no ANTHROPIC_API_KEY")
+    text = prompt + _schema_words(json_schema)
+    content: object = text
+    if images:
+        content = [{"type": "image", "source": {"type": "base64", "media_type": im.mime,
+                                                 "data": base64.b64encode(im.data).decode()}} for im in images]
+        content.append({"type": "text", "text": text})
     payload: dict = {"model": model, "max_tokens": max_tokens,
-                     "messages": [{"role": "user", "content": prompt}]}
+                     "messages": [{"role": "user", "content": content}]}
     if system:
         payload["system"] = system
     if temperature is not None and claude_accepts_temperature(model):
@@ -138,26 +177,37 @@ def ask_claude(prompt: str, *, system: str | None = None, model: str = CLAUDE_MO
     status, body = transport("https://api.anthropic.com/v1/messages", headers, payload)
     _classify("Claude", status, body)
     text = "".join(b.get("text", "") for b in body.get("content", []) if b.get("type") == "text")
-    return Answer(text=text, model=body.get("model", model), provider="claude")
+    stop = body.get("stop_reason")
+    finish = "max_tokens" if stop == "max_tokens" else ("stop" if stop in (None, "end_turn", "stop_sequence") else "other")
+    return Answer(text=text, model=body.get("model", model), provider="claude", finish=finish)
 
 
 def ask_gemini(prompt: str, *, system: str | None = None, model: str = GEMINI_MODEL,
                max_tokens: int = 1024, temperature: float | None = None,
-               transport: Transport = http_transport, api_key: str | None = None) -> Answer:
+               transport: Transport = http_transport, api_key: str | None = None,
+               images: list[Image] | None = None, json_schema: dict | None = None) -> Answer:
     key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
         raise Unavailable("Gemini: no GEMINI_API_KEY")
-    payload: dict = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                     "generationConfig": gemini_generation(model, max_tokens, temperature)}
+    parts: list = [{"inline_data": {"mime_type": im.mime, "data": base64.b64encode(im.data).decode()}}
+                   for im in images or []]
+    parts.append({"text": prompt})
+    generation = gemini_generation(model, max_tokens, temperature)
+    if json_schema:
+        generation = {**generation, "responseMimeType": "application/json", "responseJsonSchema": json_schema}
+    payload: dict = {"contents": [{"role": "user", "parts": parts}], "generationConfig": generation}
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     headers = {"x-goog-api-key": key, "content-type": "application/json"}
     status, body = transport(url, headers, payload)
     _classify("Gemini", status, body)
-    parts = (body.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
+    cand = (body.get("candidates") or [{}])[0]
+    parts = cand.get("content", {}).get("parts", [])
     text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
-    return Answer(text=text, model=body.get("modelVersion", model), provider="gemini")
+    reason = cand.get("finishReason")
+    finish = "max_tokens" if reason == "MAX_TOKENS" else ("stop" if reason in (None, "STOP") else "other")
+    return Answer(text=text, model=body.get("modelVersion", model), provider="gemini", finish=finish)
 
 
 def ask(prompt: str, *, system: str | None = None, claude_model: str = CLAUDE_MODEL,

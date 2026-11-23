@@ -31,6 +31,20 @@ print(a.model, a.fallback_reason)   # e.g. "gemini-3.6-flash", "Claude unavailab
 | 400 (your request is wrong) | raises `BadRequest`; no fallback |
 | both down | raises `Unavailable` with both reasons |
 
+## Images and JSON
+
+```python
+from llm_fallback import ask_gemini, Image, ModelGone
+
+a = ask_gemini("What does this screenshot say?", images=[Image(open("shot.png", "rb").read())],
+               json_schema={"type": "object", "properties": {"text": {"type": "string"}}})
+if a.cut_off:   # the reply hit the token limit
+    ...
+```
+
+Gemini gets the schema natively (`responseJsonSchema`); Claude gets it as an instruction. A model id that no
+longer exists raises `ModelGone` (a `BadRequest`), so you can move to the next one.
+
 ## Settings each model accepts
 
 A fallback is useless if the second model rejects the call. Each provider gets only the settings it takes:

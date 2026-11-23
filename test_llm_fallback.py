@@ -64,3 +64,43 @@ def test_gemini_settings_follow_the_model():
     assert "temperature" not in g3 and g3["maxOutputTokens"] == 1500
     g2 = lf.gemini_generation("gemini-2.5-flash", 1000, 0.7)
     assert "thinkingBudget" in g2["thinkingConfig"] and g2["temperature"] == 0.7
+
+
+
+# ---- images, schemas, finish, model gone ---------------------------------------------
+
+def test_images_go_to_both_providers_as_inline_data():
+    calls = []
+    img = lf.Image(b"\x89PNG fake", "image/png")
+    lf.ask_claude("read it", images=[img], transport=fake(CLAUDE_OK, GEMINI_OK, calls))
+    lf.ask_gemini("read it", images=[img], transport=fake(CLAUDE_OK, GEMINI_OK, calls))
+    claude, gemini = calls[0][1], calls[1][1]
+    block = claude["messages"][0]["content"][0]
+    assert block["type"] == "image" and block["source"]["media_type"] == "image/png"
+    assert gemini["contents"][0]["parts"][0]["inline_data"]["mime_type"] == "image/png"
+    assert gemini["contents"][0]["parts"][-1] == {"text": "read it"}
+
+
+def test_a_schema_is_native_for_gemini_and_in_words_for_claude():
+    calls = []
+    schema = {"type": "object", "properties": {"a": {"type": "string"}}}
+    lf.ask_gemini("x", json_schema=schema, model="gemini-3.6-flash", transport=fake(CLAUDE_OK, GEMINI_OK, calls))
+    lf.ask_claude("x", json_schema=schema, transport=fake(CLAUDE_OK, GEMINI_OK, calls))
+    g = calls[0][1]["generationConfig"]
+    assert g["responseMimeType"] == "application/json" and g["responseJsonSchema"] == schema
+    assert g["thinkingConfig"] == {"thinkingLevel": "low"} and "temperature" not in g
+    assert "JSON Schema" in calls[1][1]["messages"][0]["content"]
+
+
+def test_finish_says_when_a_reply_was_cut_off():
+    cut_g = (200, {"candidates": [{"content": {"parts": [{"text": "{"}]}, "finishReason": "MAX_TOKENS"}]})
+    cut_c = (200, {"content": [{"type": "text", "text": "{"}], "stop_reason": "max_tokens"})
+    assert lf.ask_gemini("x", transport=fake(CLAUDE_OK, cut_g)).cut_off
+    assert lf.ask_claude("x", transport=fake(cut_c, GEMINI_OK)).cut_off
+    assert not lf.ask_gemini("x", transport=fake(CLAUDE_OK, GEMINI_OK)).cut_off
+
+
+def test_a_missing_model_is_model_gone_not_an_outage():
+    with pytest.raises(lf.ModelGone):
+        lf.ask_gemini("x", transport=fake(CLAUDE_OK, (404, {"error": {"message": "not found"}})))
+    assert issubclass(lf.ModelGone, lf.BadRequest)
