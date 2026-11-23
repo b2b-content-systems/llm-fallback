@@ -23,6 +23,10 @@ says how it finished (`finish`), so a reply cut off at the token limit can be
 told apart from a complete one. A model that no longer exists (HTTP 404)
 raises `ModelGone`, so a caller can move to the next model.
 
+Image output: `ask_gemini(..., output="image")` asks an image model for
+pictures; they come back in `Answer.images`. A refusal comes back as
+`finish == "refused"` with no images, never as an exception.
+
 Standard library only. Keys come from ANTHROPIC_API_KEY and GEMINI_API_KEY.
 """
 from __future__ import annotations
@@ -41,6 +45,9 @@ from typing import Callable
 CLAUDE_MODEL = "claude-sonnet-5-5"
 GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI3_HEADROOM = 500
+# finishReason values that mean the model declined (content policy), not an error
+REFUSALS = {"SAFETY", "IMAGE_SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "IMAGE_PROHIBITED_CONTENT",
+            "IMAGE_RECITATION", "NO_IMAGE"}
 TIMEOUT = 60
 
 # (status, body) <- transport(url, headers, payload)
@@ -72,7 +79,8 @@ class Answer:
     provider: str
     fallback_reason: str | None = None
     tried: list[str] = field(default_factory=list)
-    finish: str = "stop"  # stop | max_tokens | other
+    finish: str = "stop"  # stop | max_tokens | refused | other
+    images: list["Image"] = field(default_factory=list)
 
     @property
     def cut_off(self) -> bool:
@@ -133,7 +141,15 @@ def claude_accepts_temperature(model: str) -> bool:
     return not (model.startswith("claude-opus") and (major, minor) >= (4, 7))
 
 
+def is_image_model(model: str) -> bool:
+    # "-image" ids (gemini-3.1-flash-image) and the Nano Banana ids (gemini-nano-banana-2.1) have no "-image"
+    return "-image" in model or "banana" in model or model.startswith("imagen")
+
+
 def gemini_generation(model: str, max_tokens: int, temperature: float | None) -> dict:
+    if is_image_model(model):
+        # image models take no thinking settings and no sampling settings
+        return {"maxOutputTokens": max_tokens}
     m = re.match(r"gemini-(\d+)", model)
     major = int(m.group(1)) if m else 3
     if major >= 3:
@@ -185,7 +201,8 @@ def ask_claude(prompt: str, *, system: str | None = None, model: str = CLAUDE_MO
 def ask_gemini(prompt: str, *, system: str | None = None, model: str = GEMINI_MODEL,
                max_tokens: int = 1024, temperature: float | None = None,
                transport: Transport = http_transport, api_key: str | None = None,
-               images: list[Image] | None = None, json_schema: dict | None = None) -> Answer:
+               images: list[Image] | None = None, json_schema: dict | None = None,
+               output: str = "text", aspect_ratio: str | None = None) -> Answer:
     key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
         raise Unavailable("Gemini: no GEMINI_API_KEY")
@@ -195,6 +212,10 @@ def ask_gemini(prompt: str, *, system: str | None = None, model: str = GEMINI_MO
     generation = gemini_generation(model, max_tokens, temperature)
     if json_schema:
         generation = {**generation, "responseMimeType": "application/json", "responseJsonSchema": json_schema}
+    if output == "image":
+        generation = {**generation, "responseModalities": ["IMAGE"]}
+        if aspect_ratio:
+            generation["imageConfig"] = {"aspectRatio": aspect_ratio}
     payload: dict = {"contents": [{"role": "user", "parts": parts}], "generationConfig": generation}
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}
@@ -204,10 +225,22 @@ def ask_gemini(prompt: str, *, system: str | None = None, model: str = GEMINI_MO
     _classify("Gemini", status, body)
     cand = (body.get("candidates") or [{}])[0]
     parts = cand.get("content", {}).get("parts", [])
-    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought") and "text" in p)
+    pics = []
+    for p in parts:
+        blob = p.get("inlineData") or p.get("inline_data")
+        if blob and not p.get("thought"):
+            pics.append(Image(base64.b64decode(blob.get("data", "")), blob.get("mimeType") or blob.get("mime_type")
+                              or "image/png"))
     reason = cand.get("finishReason")
-    finish = "max_tokens" if reason == "MAX_TOKENS" else ("stop" if reason in (None, "STOP") else "other")
-    return Answer(text=text, model=body.get("modelVersion", model), provider="gemini", finish=finish)
+    blocked = (body.get("promptFeedback") or {}).get("blockReason")
+    if blocked or reason in REFUSALS:
+        finish = "refused"
+    elif reason == "MAX_TOKENS":
+        finish = "max_tokens"
+    else:
+        finish = "stop" if reason in (None, "STOP") else "other"
+    return Answer(text=text, model=body.get("modelVersion", model), provider="gemini", finish=finish, images=pics)
 
 
 def ask(prompt: str, *, system: str | None = None, claude_model: str = CLAUDE_MODEL,

@@ -104,3 +104,39 @@ def test_a_missing_model_is_model_gone_not_an_outage():
     with pytest.raises(lf.ModelGone):
         lf.ask_gemini("x", transport=fake(CLAUDE_OK, (404, {"error": {"message": "not found"}})))
     assert issubclass(lf.ModelGone, lf.BadRequest)
+
+
+
+# ---- image output -------------------------------------------------------------------
+
+def test_an_image_model_returns_pictures_and_takes_no_thinking_settings():
+    import base64
+    calls = []
+    png = b"\x89PNG fake"
+    ok = (200, {"modelVersion": "gemini-3.1-flash-image", "candidates": [{"content": {"parts": [
+        {"text": "here"}, {"inlineData": {"mimeType": "image/png", "data": base64.b64encode(png).decode()}}]},
+        "finishReason": "STOP"}]})
+    a = lf.ask_gemini("draw", model="gemini-3.1-flash-image", output="image", aspect_ratio="3:4",
+                      images=[lf.Image(b"ref")], transport=fake(CLAUDE_OK, ok, calls))
+    assert a.images == [lf.Image(png, "image/png")] and a.finish == "stop"
+    gen = calls[0][1]["generationConfig"]
+    assert gen["responseModalities"] == ["IMAGE"] and gen["imageConfig"] == {"aspectRatio": "3:4"}
+    assert "thinkingConfig" not in gen and "temperature" not in gen
+
+
+@pytest.mark.parametrize("body", [
+    {"candidates": [{"content": {"parts": []}, "finishReason": "IMAGE_SAFETY"}]},
+    {"candidates": [{"content": {"parts": []}, "finishReason": "PROHIBITED_CONTENT"}]},
+    {"promptFeedback": {"blockReason": "SAFETY"}},
+])
+def test_a_refusal_is_an_answer_not_an_error(body):
+    a = lf.ask_gemini("draw", model="gemini-3.1-flash-image", output="image", transport=fake(CLAUDE_OK, (200, body)))
+    assert a.finish == "refused" and a.images == []
+
+
+
+@pytest.mark.parametrize("model", ["gemini-3.1-flash-image", "gemini-nano-banana-2.1", "nano-banana-pro-preview",
+                                   "gemini-3-pro-image"])
+def test_every_image_model_id_gets_no_thinking_settings(model):
+    assert lf.is_image_model(model) and "thinkingConfig" not in lf.gemini_generation(model, 100, None)
+    assert not lf.is_image_model("gemini-3.6-flash")

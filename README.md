@@ -42,7 +42,9 @@ if a.cut_off:   # the reply hit the token limit
     ...
 ```
 
-Gemini gets the schema natively (`responseJsonSchema`); Claude gets it as an instruction. A model id that no
+Gemini gets the schema natively (`responseJsonSchema`); Claude gets it as an instruction. For pictures,
+`ask_gemini(prompt, model="gemini-3.1-flash-image", output="image")` returns them in `Answer.images`; a content
+refusal comes back as `Answer.finish == "refused"`, not an exception. A model id that no
 longer exists raises `ModelGone` (a `BadRequest`), so you can move to the next one.
 
 ## Settings each model accepts
