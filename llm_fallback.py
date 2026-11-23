@@ -142,7 +142,8 @@ def claude_accepts_temperature(model: str) -> bool:
 
 
 def is_image_model(model: str) -> bool:
-    return "-image" in model or model.startswith("imagen")
+    # "-image" ids (gemini-3.1-flash-image) and the Nano Banana ids (gemini-nano-banana-2.1) have no "-image"
+    return "-image" in model or "banana" in model or model.startswith("imagen")
 
 
 def gemini_generation(model: str, max_tokens: int, temperature: float | None) -> dict:

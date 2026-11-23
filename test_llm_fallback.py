@@ -132,3 +132,11 @@ def test_an_image_model_returns_pictures_and_takes_no_thinking_settings():
 def test_a_refusal_is_an_answer_not_an_error(body):
     a = lf.ask_gemini("draw", model="gemini-3.1-flash-image", output="image", transport=fake(CLAUDE_OK, (200, body)))
     assert a.finish == "refused" and a.images == []
+
+
+
+@pytest.mark.parametrize("model", ["gemini-3.1-flash-image", "gemini-nano-banana-2.1", "nano-banana-pro-preview",
+                                   "gemini-3-pro-image"])
+def test_every_image_model_id_gets_no_thinking_settings(model):
+    assert lf.is_image_model(model) and "thinkingConfig" not in lf.gemini_generation(model, 100, None)
+    assert not lf.is_image_model("gemini-3.6-flash")
